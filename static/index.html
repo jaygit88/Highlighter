@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Highlighter</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="logo">⚽</span> Highlighter</div>
+  <div class="top-actions">
+    <span id="keptSummary" class="muted"></span>
+    <button id="exportBtn" class="primary" disabled>Make highlight reel</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+    <div class="side-head">
+      <h2>Matches</h2>
+      <label class="button small" title="Add video files">
+        + Add videos
+        <input id="fileInput" type="file" accept="video/*,.mp4,.mov,.mkv,.avi,.mts,.lrv" multiple hidden>
+      </label>
+    </div>
+    <div id="uploadStatus" class="upload-status" hidden></div>
+    <ul id="videoList" class="video-list"></ul>
+    <p class="hint">Or drop files into the folder:<br><code id="folderPath"></code><br>and press <button id="rescanBtn" class="link">Refresh</button></p>
+  </aside>
+
+  <main class="main">
+    <section id="empty" class="empty">
+      <div class="drop-zone" id="dropZone">
+        <div class="big">⚽</div>
+        <h1>Drop your match videos here</h1>
+        <p>Highlighter watches each video for the moments that matter: goals, saves, close misses and celebrations. You pick which ones go in the reel.</p>
+        <label class="button primary">Choose videos<input id="fileInput2" type="file" accept="video/*" multiple hidden></label>
+      </div>
+    </section>
+
+    <section id="processing" class="processing" hidden>
+      <h2 id="procTitle"></h2>
+      <p id="procStage" class="muted"></p>
+      <div class="bar"><div id="procBar"></div></div>
+      <p class="muted small">A 30 minute video usually takes a few minutes. You can review other matches meanwhile.</p>
+      <p id="procError" class="error" hidden></p>
+      <button id="retryBtn" hidden>Try again</button>
+    </section>
+
+    <section id="review" class="review" hidden>
+      <div class="player-wrap">
+        <video id="player" controls playsinline preload="auto"></video>
+      </div>
+
+      <div class="timeline-wrap">
+        <canvas id="timeline" height="84"></canvas>
+        <div class="timeline-legend muted small">
+          <span><i class="sw curve"></i> Action level</span>
+          <span><i class="sw kept"></i> Kept</span>
+          <span><i class="sw dropped"></i> Left out</span>
+          <span class="right">Click the timeline to jump there</span>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <label class="sens">
+          Find
+          <span class="muted">fewer</span>
+          <input id="sensitivity" type="range" min="0" max="1" step="0.05" value="0.5">
+          <span class="muted">more</span>
+          moments
+        </label>
+        <button id="addClipBtn" title="Add a clip around the current point (A)">+ Add clip here</button>
+        <button id="keepAllBtn" class="ghost">Keep all</button>
+        <button id="dropAllBtn" class="ghost">Leave all out</button>
+      </div>
+
+      <div class="clips-head">
+        <h2>Moments <span id="clipCount" class="muted"></span></h2>
+        <span class="muted small keys">Keys: <kbd>N</kbd>/<kbd>P</kbd> next/prev · <kbd>K</kbd> keep · <kbd>1</kbd> goal <kbd>2</kbd> save <kbd>3</kbd> miss <kbd>4</kbd> celebration · <kbd>Space</kbd> play</span>
+      </div>
+      <ol id="clipList" class="clip-list"></ol>
+    </section>
+  </main>
+</div>
+
+<dialog id="exportDialog">
+  <form method="dialog" id="exportForm">
+    <h2>Make highlight reel</h2>
+    <div id="exportSetup">
+      <label class="field">Name
+        <input id="exTitle" type="text" placeholder="e.g. Saturday vs Rovers" maxlength="60">
+      </label>
+      <fieldset class="field">
+        <legend>Which matches</legend>
+        <label><input type="radio" name="scope" value="current" checked> Just this match</label>
+        <label><input type="radio" name="scope" value="all"> All matches</label>
+      </fieldset>
+      <label class="field">Quality
+        <select id="exQuality"><option value="1080">1080p (best)</option><option value="720">720p (smaller file)</option></select>
+      </label>
+      <label class="check"><input id="exFades" type="checkbox" checked> Smooth fade between clips</label>
+      <label class="check"><input id="exReplays" type="checkbox" checked> Slow-motion replay after each goal</label>
+      <p id="exSummary" class="muted small"></p>
+      <p id="exError" class="error" hidden></p>
+      <div class="dialog-actions">
+        <button value="cancel" class="ghost">Cancel</button>
+        <button id="exGo" class="primary" value="default">Make reel</button>
+      </div>
+    </div>
+    <div id="exportRun" hidden>
+      <p id="exMsg">Starting…</p>
+      <div class="bar"><div id="exBar"></div></div>
+      <div id="exDone" hidden>
+        <video id="exVideo" controls playsinline></video>
+        <div class="dialog-actions">
+          <button value="cancel" class="ghost">Close</button>
+          <a id="exDownload" class="button primary" href="#">Download</a>
+        </div>
+      </div>
+    </div>
+  </form>
+</dialog>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
