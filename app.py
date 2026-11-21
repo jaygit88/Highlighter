@@ -1,15 +1,20 @@
 """Highlighter: a local web app that finds the best moments in football videos.
 
 Run:  python app.py   then open http://localhost:5000
+Phones on the same Wi-Fi can use it too: click "Use on phone" for the address and PIN.
 """
 
 from __future__ import annotations
 
+import datetime
 import hashlib
+import io
 import json
 import os
 import queue
+import secrets
 import shutil
+import socket
 import sys
 import threading
 import time
@@ -17,7 +22,9 @@ import traceback
 import uuid
 import webbrowser
 
-from flask import Flask, abort, jsonify, request, send_file, send_from_directory
+import qrcode
+import qrcode.image.svg
+from flask import Flask, abort, jsonify, request, send_file, send_from_directory, session
 from werkzeug.utils import secure_filename
 
 from highlighter import analysis
@@ -30,11 +37,37 @@ EXPORTS_DIR = os.path.join(ROOT, "exports")
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".mts", ".lrv", ".360", ".insv"}
 KINDS = {"highlight", "goal", "save", "miss", "celebration"}
 
-for d in (VIDEOS_DIR, DATA_DIR, EXPORTS_DIR):
+UPLOADS_DIR = os.path.join(DATA_DIR, "_uploads")
+PORT = int(os.environ.get("PORT", 5000))
+LOCAL_ONLY = os.environ.get("HIGHLIGHTER_LOCAL_ONLY") == "1"
+
+for d in (VIDEOS_DIR, DATA_DIR, EXPORTS_DIR, UPLOADS_DIR):
     os.makedirs(d, exist_ok=True)
 
+
+def _persistent_secret(name: str, make) -> str:
+    path = os.path.join(DATA_DIR, name)
+    try:
+        with open(path) as f:
+            value = f.read().strip()
+            if value:
+                return value
+    except FileNotFoundError:
+        pass
+    value = make()
+    with open(path, "w") as f:
+        f.write(value)
+    return value
+
+
 app = Flask(__name__, static_folder="static", static_url_path="/static")
-app.config["MAX_CONTENT_LENGTH"] = None
+app.config.update(
+    MAX_CONTENT_LENGTH=None,
+    SECRET_KEY=_persistent_secret("secret.txt", lambda: secrets.token_hex(32)),
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(days=365),
+    SESSION_COOKIE_SAMESITE="Lax",
+)
+PIN = _persistent_secret("pin.txt", lambda: f"{secrets.randbelow(10**6):06d}")
 
 lock = threading.RLock()
 work_queue: "queue.Queue[str]" = queue.Queue()
@@ -169,6 +202,78 @@ def run_export(job_id: str, items: list[ReelClip], out_path: str, opts: dict) ->
         exports[job_id].update(status="error", message=str(exc))
 
 
+# ---------------------------------------------------------------- phone access
+
+def is_local() -> bool:
+    return request.remote_addr in ("127.0.0.1", "::1")
+
+
+def lan_ip() -> str | None:
+    """This computer's address on the home network (no data is actually sent)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        ip = s.getsockname()[0]
+        return None if ip.startswith("127.") else ip
+    except OSError:
+        return None
+    finally:
+        s.close()
+
+
+failed_logins: dict[str, list[float]] = {}
+
+
+@app.before_request
+def require_pin():
+    """The computer itself is always allowed; other devices need the PIN once."""
+    if is_local() or session.get("ok") or request.path.startswith("/static/"):
+        return None
+    if request.path in ("/login", "/api/login"):
+        return None
+    if request.path.startswith("/api/"):
+        return jsonify({"error": "Enter the PIN first", "login": True}), 401
+    return send_from_directory(os.path.join(ROOT, "static"), "login.html")
+
+
+@app.get("/login")
+def login_page():
+    return send_from_directory(os.path.join(ROOT, "static"), "login.html")
+
+
+@app.post("/api/login")
+def login():
+    ip = request.remote_addr or "?"
+    now = time.time()
+    recent = [t for t in failed_logins.get(ip, []) if now - t < 300]
+    failed_logins[ip] = recent
+    if len(recent) >= 8:
+        return jsonify({"error": "Too many wrong tries. Wait 5 minutes and try again."}), 429
+    pin = str((request.get_json(silent=True) or {}).get("pin", "")).strip()
+    if secrets.compare_digest(pin, PIN):
+        session.permanent = True
+        session["ok"] = True
+        failed_logins.pop(ip, None)
+        return jsonify({"ok": True})
+    recent.append(now)
+    return jsonify({"error": "That PIN isn't right. It's shown on the computer under “Use on phone”."}), 403
+
+
+@app.get("/api/phone")
+def phone_info():
+    """Address, QR code and PIN for connecting a phone. Only shown on the computer itself."""
+    if not is_local():
+        abort(403)
+    ip = None if LOCAL_ONLY else lan_ip()
+    url = f"http://{ip}:{PORT}" if ip else None
+    svg = None
+    if url:
+        buf = io.BytesIO()
+        qrcode.make(url, image_factory=qrcode.image.svg.SvgPathImage, border=2).save(buf)
+        svg = buf.getvalue().decode()
+    return jsonify({"url": url, "pin": PIN, "qr": svg, "local_only": LOCAL_ONLY})
+
+
 # ---------------------------------------------------------------- routes
 
 @app.get("/")
@@ -185,27 +290,71 @@ def list_videos():
     return jsonify({"videos": [public(get_meta(m["id"])) for m in videos], "folder": VIDEOS_DIR})
 
 
-@app.post("/api/upload")
-def upload():
-    files = request.files.getlist("files")
-    added = []
-    for f in files:
-        name = secure_filename(f.filename or "")
-        if not name or os.path.splitext(name)[1].lower() not in VIDEO_EXTS:
-            continue
-        dest = os.path.join(VIDEOS_DIR, name)
-        base, ext = os.path.splitext(name)
-        n = 1
-        while os.path.exists(dest):
-            name = f"{base}-{n}{ext}"
-            dest = os.path.join(VIDEOS_DIR, name)
-            n += 1
-        f.save(dest)
-        added.append(name)
+# Uploads arrive in pieces, so a big file from a phone can carry on where it
+# left off if the Wi-Fi drops or the screen locks.
+
+def upload_part(uid: str) -> str:
+    if not uid.isalnum():
+        abort(400)
+    return os.path.join(UPLOADS_DIR, uid + ".part")
+
+
+@app.post("/api/upload/start")
+def upload_start():
+    body = request.get_json(force=True) or {}
+    name = secure_filename(str(body.get("name", "")))
+    size = int(body.get("size") or 0)
+    if not name or os.path.splitext(name)[1].lower() not in VIDEO_EXTS:
+        return jsonify({"error": f"“{body.get('name')}” doesn't look like a video file."}), 400
+    existing = os.path.join(VIDEOS_DIR, name)
+    if os.path.exists(existing) and os.path.getsize(existing) == size:
+        return jsonify({"exists": True, "video": video_id(name)})
+    uid = hashlib.sha1(f"{name}:{size}".encode()).hexdigest()[:20]
+    part = upload_part(uid)
+    offset = os.path.getsize(part) if os.path.exists(part) else 0
+    write_json(os.path.join(UPLOADS_DIR, uid + ".json"), {"name": name, "size": size})
+    return jsonify({"id": uid, "offset": offset})
+
+
+@app.put("/api/upload/<uid>")
+def upload_chunk(uid):
+    part = upload_part(uid)
+    info = read_json(os.path.join(UPLOADS_DIR, uid + ".json"), None)
+    if info is None:
+        abort(404)
+    offset = int(request.args.get("offset", -1))
+    current = os.path.getsize(part) if os.path.exists(part) else 0
+    if offset != current:
+        return jsonify({"offset": current}), 409
+    with open(part, "ab") as f:
+        while True:
+            chunk = request.stream.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+    return jsonify({"offset": os.path.getsize(part)})
+
+
+@app.post("/api/upload/<uid>/finish")
+def upload_finish(uid):
+    part = upload_part(uid)
+    meta_path = os.path.join(UPLOADS_DIR, uid + ".json")
+    info = read_json(meta_path, None)
+    if info is None or not os.path.exists(part):
+        abort(404)
+    if os.path.getsize(part) != info["size"]:
+        return jsonify({"error": "The upload isn't complete yet.", "offset": os.path.getsize(part)}), 409
+    name = info["name"]
+    base, ext = os.path.splitext(name)
+    n = 1
+    while os.path.exists(os.path.join(VIDEOS_DIR, name)):
+        name = f"{base}-{n}{ext}"
+        n += 1
+    shutil.move(part, os.path.join(VIDEOS_DIR, name))
+    os.remove(meta_path)
     scan_videos()
-    for name in added:
-        queue_video(video_id(name))
-    return jsonify({"added": added})
+    queue_video(video_id(name))
+    return jsonify({"video": video_id(name), "name": name})
 
 
 def queue_video(vid: str) -> None:
@@ -357,9 +506,12 @@ if __name__ == "__main__":
     check_ffmpeg()
     threading.Thread(target=worker, daemon=True).start()
     resume_unfinished()
-    port = int(os.environ.get("PORT", 5000))
-    url = f"http://localhost:{port}"
-    print(f"\n  Highlighter is running at {url}\n  Put videos in: {VIDEOS_DIR}\n  Press Ctrl+C to stop.\n")
+    url = f"http://localhost:{PORT}"
+    print(f"\n  Highlighter is running at {url}")
+    ip = None if LOCAL_ONLY else lan_ip()
+    if ip:
+        print(f"  On your phone (same Wi-Fi): http://{ip}:{PORT}   PIN: {PIN}")
+    print(f"  Videos are kept in: {VIDEOS_DIR}\n  Keep this window open while you use it. Press Ctrl+C to stop.\n")
     if os.environ.get("HIGHLIGHTER_NO_BROWSER") != "1":
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
-    app.run(host="127.0.0.1", port=port, threaded=True)
+    app.run(host="127.0.0.1" if LOCAL_ONLY else "0.0.0.0", port=PORT, threaded=True)

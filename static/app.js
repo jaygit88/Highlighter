@@ -31,7 +31,8 @@ async function api(path, opts = {}) {
     ...opts,
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  if (res.status === 401 && data.login) { location.href = "/login"; throw new Error("Enter the PIN first"); }
+  if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { status: res.status, data });
   return data;
 }
 
@@ -384,25 +385,100 @@ document.addEventListener("keydown", (e) => {
 
 // ------------------------------------------------------------ uploads
 
+const CHUNK = 8 * 1024 * 1024;
+let uploading = false;
+
+function gb(bytes) {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
+}
+
+function putChunk(uid, offset, blob, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", `/api/upload/${uid}?offset=${offset}`);
+    xhr.upload.onprogress = (e) => onProgress(e.loaded);
+    xhr.onload = () => {
+      let body = {};
+      try { body = JSON.parse(xhr.responseText); } catch { /* ignore */ }
+      if (xhr.status === 200 || xhr.status === 409) resolve(body.offset);
+      else if (xhr.status === 401) { location.href = "/login"; reject(new Error("login")); }
+      else reject(new Error(`Server said ${xhr.status}`));
+    };
+    xhr.onerror = () => reject(new Error("Connection lost"));
+    xhr.timeout = 120000;
+    xhr.ontimeout = () => reject(new Error("Timed out"));
+    xhr.send(blob);
+  });
+}
+
+// Sends each video in 8 MB pieces. If the connection drops it retries, and if
+// the page is reloaded, picking the same video again resumes where it stopped.
 async function uploadFiles(files) {
   files = [...files].filter((f) => f.type.startsWith("video/") || /\.(mp4|mov|m4v|mkv|avi|mts|lrv)$/i.test(f.name));
-  if (!files.length) return;
+  if (!files.length || uploading) return;
+  uploading = true;
   const status = $("uploadStatus");
   status.hidden = false;
-  const form = new FormData();
-  files.forEach((f) => form.append("files", f));
-  await new Promise((resolve) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/upload");
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) status.textContent = `Adding ${files.length} video${files.length > 1 ? "s" : ""}… ${Math.round((e.loaded / e.total) * 100)}%`;
-    };
-    xhr.onload = xhr.onerror = resolve;
-    xhr.send(form);
-  });
-  status.hidden = true;
+  const show = (text, frac) => { $("uploadText").textContent = text; $("uploadBar").style.width = `${frac * 100}%`; };
+  let lastVideo = null;
+  try {
+    for (const [i, file] of files.entries()) {
+      const label = files.length > 1 ? `Sending video ${i + 1} of ${files.length}` : "Sending video";
+      const start = await api("/api/upload/start", { method: "POST", body: JSON.stringify({ name: file.name, size: file.size }) });
+      if (start.exists) { lastVideo = start.video; continue; }
+      let offset = start.offset;
+      let failures = 0;
+      while (offset < file.size) {
+        const end = Math.min(file.size, offset + CHUNK);
+        show(`${label}: ${Math.floor((offset / file.size) * 100)}% (${gb(offset)} of ${gb(file.size)})`, offset / file.size);
+        try {
+          offset = await putChunk(start.id, offset, file.slice(offset, end), (sent) => {
+            const now = offset + sent;
+            show(`${label}: ${Math.floor((now / file.size) * 100)}% (${gb(now)} of ${gb(file.size)})`, now / file.size);
+          });
+          failures = 0;
+        } catch (err) {
+          if (err.message === "login") return;
+          failures += 1;
+          if (failures > 8) throw new Error(`Lost connection to the computer while sending ${file.name}`);
+          show(`${label}: connection dropped, retrying…`, offset / file.size);
+          await new Promise((r) => setTimeout(r, Math.min(15000, 1000 * 2 ** failures)));
+          try {
+            offset = (await api("/api/upload/start", { method: "POST", body: JSON.stringify({ name: file.name, size: file.size }) })).offset;
+          } catch { /* still offline; try again next loop */ }
+        }
+      }
+      const done = await api(`/api/upload/${start.id}/finish`, { method: "POST" });
+      lastVideo = done.video;
+    }
+    status.hidden = true;
+  } catch (err) {
+    show(`Problem: ${err.message}. Choose the same video again to carry on.`, 0);
+  } finally {
+    uploading = false;
+  }
   await loadVideos();
+  if (lastVideo) selectVideo(lastVideo);
 }
+
+// ------------------------------------------------------------ phone access
+
+async function setupPhoneButton() {
+  let info;
+  try { info = await api("/api/phone"); } catch { return; } // we're on the phone
+  document.querySelectorAll(".computer-only").forEach((n) => (n.hidden = false));
+  if (info.local_only) return;
+  $("phoneBtn").hidden = false;
+  $("phoneBtn").addEventListener("click", () => {
+    $("phoneOk").hidden = !info.url;
+    $("phoneNone").hidden = !!info.url;
+    $("qr").innerHTML = info.qr || "";
+    $("phoneUrl").textContent = info.url || "";
+    $("phonePin").textContent = info.pin;
+    $("phoneDialog").showModal();
+  });
+}
+setupPhoneButton();
 $("fileInput").addEventListener("change", (e) => { uploadFiles(e.target.files); e.target.value = ""; });
 $("fileInput2").addEventListener("change", (e) => { uploadFiles(e.target.files); e.target.value = ""; });
 document.addEventListener("dragover", (e) => { e.preventDefault(); document.body.classList.add("dragging"); });
@@ -462,6 +538,7 @@ $("exGo").addEventListener("click", async (e) => {
       $("exMsg").textContent = `Your reel is ready: ${s.file}`;
       $("exVideo").src = url;
       $("exDownload").href = `${url}?dl=1`;
+      $("exDownload").textContent = matchMedia("(pointer: coarse)").matches ? "Save to phone" : "Download";
       $("exDone").hidden = false;
     }
   };

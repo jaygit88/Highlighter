@@ -9,6 +9,6 @@ fi
 if [ ! -d .venv ]; then
   echo "First run: setting things up, this takes a minute..."
   python3 -m venv .venv
-  .venv/bin/python -m pip install -q -r requirements.txt
 fi
+.venv/bin/python -m pip install -q --disable-pip-version-check -r requirements.txt
 exec .venv/bin/python app.py

@@ -10,7 +10,7 @@ where ffmpeg >nul 2>nul || (
 if not exist .venv (
   echo First run: setting things up, this takes a minute...
   python -m venv .venv || (echo Python is not installed. Get it from https://www.python.org/downloads/ & pause & exit /b 1)
-  .venv\Scripts\python -m pip install -q -r requirements.txt
 )
+.venv\Scripts\python -m pip install -q --disable-pip-version-check -r requirements.txt
 .venv\Scripts\python app.py
 pause

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Highlighter</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+</head>
+<body>
+<main class="login">
+  <div class="big">⚽</div>
+  <h1>Highlighter</h1>
+  <p class="muted">Enter the PIN shown on your computer, under <b>Use on phone</b>.</p>
+  <form id="f">
+    <input id="pin" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" placeholder="••••••" autofocus>
+    <button class="primary" type="submit">Continue</button>
+  </form>
+  <p id="err" class="error" hidden></p>
+</main>
+<script>
+document.getElementById("f").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const err = document.getElementById("err");
+  const res = await fetch("/api/login", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pin: document.getElementById("pin").value }),
+  });
+  if (res.ok) { location.href = "/"; return; }
+  err.textContent = (await res.json().catch(() => ({}))).error || "Something went wrong";
+  err.hidden = false;
+});
+</script>
+</body>
+</html>

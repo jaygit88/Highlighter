@@ -12,6 +12,7 @@
   <div class="brand"><span class="logo">⚽</span> Highlighter</div>
   <div class="top-actions">
     <span id="keptSummary" class="muted"></span>
+    <button id="phoneBtn" hidden>📱 Use on phone</button>
     <button id="exportBtn" class="primary" disabled>Make highlight reel</button>
   </div>
 </header>
@@ -25,16 +26,21 @@
         <input id="fileInput" type="file" accept="video/*,.mp4,.mov,.mkv,.avi,.mts,.lrv" multiple hidden>
       </label>
     </div>
-    <div id="uploadStatus" class="upload-status" hidden></div>
+    <div id="uploadStatus" class="upload-status" hidden>
+      <div id="uploadText"></div>
+      <div class="bar"><div id="uploadBar"></div></div>
+      <div class="muted small">Keep this screen open until it's sent. If it stops, choose the same video again and it'll carry on.</div>
+    </div>
     <ul id="videoList" class="video-list"></ul>
-    <p class="hint">Or drop files into the folder:<br><code id="folderPath"></code><br>and press <button id="rescanBtn" class="link">Refresh</button></p>
+    <p class="hint computer-only" hidden>Or drop files into the folder:<br><code id="folderPath"></code><br>and press <button id="rescanBtn" class="link">Refresh</button></p>
   </aside>
 
   <main class="main">
     <section id="empty" class="empty">
       <div class="drop-zone" id="dropZone">
         <div class="big">⚽</div>
-        <h1>Drop your match videos here</h1>
+        <h1 class="no-touch">Drop your match videos here</h1>
+        <h1 class="touch-only">Add your match videos</h1>
         <p>Highlighter watches each video for the moments that matter: goals, saves, close misses and celebrations. You pick which ones go in the reel.</p>
         <label class="button primary">Choose videos<input id="fileInput2" type="file" accept="video/*" multiple hidden></label>
       </div>
@@ -85,6 +91,27 @@
     </section>
   </main>
 </div>
+
+<dialog id="phoneDialog">
+  <form method="dialog">
+    <h2>📱 Use on your phone</h2>
+    <div id="phoneOk">
+      <ol class="steps">
+        <li>Connect your phone to the <b>same Wi-Fi</b> as this computer.</li>
+        <li>Open the camera and scan this code, or type the address into Chrome:</li>
+      </ol>
+      <div id="qr" class="qr"></div>
+      <p class="address"><code id="phoneUrl"></code></p>
+      <ol class="steps" start="3">
+        <li>Enter this PIN: <b id="phonePin" class="pin"></b></li>
+      </ol>
+      <p class="muted small">Keep this computer switched on and Highlighter running while you use it.
+        If the phone can't connect, see “Phone won't connect” in the README. It's usually Windows Firewall.</p>
+    </div>
+    <p id="phoneNone" class="error" hidden>This computer doesn't seem to be on a network. Connect it to your Wi-Fi and try again.</p>
+    <div class="dialog-actions"><button class="primary" value="cancel">Done</button></div>
+  </form>
+</dialog>
 
 <dialog id="exportDialog">
   <form method="dialog" id="exportForm">

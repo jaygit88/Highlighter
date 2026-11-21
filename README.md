@@ -50,7 +50,48 @@ Your browser opens at http://localhost:5000. Then:
    and slow-motion replays after goals. The finished MP4 can be downloaded, and
    it's also saved in the `exports` folder.
 
-### Keyboard shortcuts
+## Using it from your phone
+
+Your computer does the video processing. Your phone is the remote: you send
+videos from your gallery, review the moments, and save the finished reel back
+to your phone.
+
+1. Start Highlighter on the computer (double-click `run.bat`).
+2. On the computer, click **📱 Use on phone**. It shows a QR code and a 6-digit PIN.
+3. With your phone on the **same Wi-Fi**, scan the QR code with the camera,
+   or type the address into Chrome.
+4. Enter the PIN. The phone remembers it, so you only do this once.
+5. Tap **+ Add videos** and pick your match videos from the gallery.
+
+While a video is being sent, keep the screen on and Chrome open. Action camera
+files are big (a 30-minute match can be several GB), so this takes a few
+minutes over Wi-Fi. If it gets interrupted, pick the same video again and it
+carries on from where it stopped. Once a video is sent, the computer takes over
+and you can lock your phone. Come back later to review.
+
+When the reel is made, tap **Save to phone**. It goes into your Downloads, and
+you can share it from there to WhatsApp, Facebook and so on.
+
+### Phone won't connect?
+
+- **Windows Firewall** (most likely). The first time you run Highlighter,
+  Windows asks whether to let Python use the network. Tick **Private networks**
+  and click **Allow access**. If you missed it, open *Start → "Allow an app
+  through Windows Firewall" → Change settings*, find **Python**, tick the
+  **Private** box, then click OK.
+- Check the phone is on your home Wi-Fi, not mobile data, and not on a "guest"
+  Wi-Fi network.
+- Your home Wi-Fi should be set as a **Private** network in Windows
+  (*Settings → Network & internet → Wi-Fi → your network → Private network*).
+- The address can change if your computer restarts. Click **📱 Use on phone**
+  again for the current one.
+
+The PIN stops anyone else on your Wi-Fi from getting in. It's stored in
+`data/pin.txt`. Delete that file and restart to get a new PIN, which also signs
+out every phone. To turn phone access off completely, set
+`HIGHLIGHTER_LOCAL_ONLY=1` before starting.
+
+### Keyboard shortcuts (on the computer)
 
 | Key | Action |
 |-----|--------|
